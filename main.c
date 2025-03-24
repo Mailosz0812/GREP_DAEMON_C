@@ -7,12 +7,17 @@
 #include <sys/stat.h>
 #include <string.h>
 #include <unistd.h>
+#include <syslog.h>
 
 #define EXIT_NO_ARGS 1
 void lookup(char **args,char* path);
 void checkForFile(char *dName,char **args);
+void daemonize();
 
 int main(int argc, char ** argv){
+
+    daemonize();
+
     lookup(argv,"/home");
     exit(0);
 }
@@ -51,8 +56,73 @@ void checkForFile(char *dName,char **args){
     while(temp != NULL){
         if(strcmp(temp,dName) == 0){
             printf("File found %s \n",dName);
+            syslog(LOG_INFO, "File found %s", dname);
         }
         i++;
         temp = args[i];
     }
+}
+
+void daemonize() {
+    pid_t pid;
+
+    printf("Starting daemon...\n");
+    fflush(stdout);
+
+    pid = fork();
+
+    if (pid < 0) 
+    {
+        perror("fork failed");
+        exit(EXIT_FAILURE);
+    }
+
+    if (pid > 0) 
+    {
+        exit(EXIT_SUCCESS);
+    }
+
+    if (setsid() < 0) 
+    {
+        perror("setsid failed");
+        exit(EXIT_FAILURE);
+    }
+
+    // Ignorujemy sygnał SIGHUP
+    // signal(SIGHUP, SIG_IGN);
+
+    pid = fork();
+    if (pid < 0) 
+    {
+        perror("Second fork failed");
+        exit(EXIT_FAILURE);
+    }
+
+    if (pid > 0) 
+    {
+        exit(EXIT_SUCCESS);
+    }
+
+    // Zmieniamy katalog roboczy na root, aby nie blokować unmountowania
+    if (chdir("/") < 0) 
+    {
+        perror("chdir failed");
+        exit(EXIT_FAILURE);
+    }
+    
+    // Zamykamy standardowe deskryptory plików
+    close(STDIN_FILENO);
+    close(STDOUT_FILENO);
+    close(STDERR_FILENO);
+    
+    // Przekierowujemy STDIN, STDOUT, STDERR na /dev/null
+    open("/dev/null", O_RDONLY);
+    open("/dev/null", O_WRONLY);
+    open("/dev/null", O_RDWR);
+    
+    // Ustawienie umask na 0 dla pełnej kontroli nad plikami
+    umask(0);
+
+    openlog("file_search_daemon", LOG_PID, LOG_DAEMON);
+    syslog(LOG_INFO, "Daemon started successfully");
 }
