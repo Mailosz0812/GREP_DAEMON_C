@@ -8,19 +8,78 @@
 #include <string.h>
 #include <unistd.h>
 #include <syslog.h>
+#include <signal.h>
+#include <getopt.h> 
 
 #define EXIT_NO_ARGS 1
+volatile sig_atomic_t wakeup_signal = 0;
+
 void lookup(char **args,char* path);
 void checkForFile(char *dName,char **args);
+void handle_signal(int sig);
+void sleep_with_signals(int sleep_time);
 void daemonize();
 
 int main(int argc, char ** argv){
 
+    // daemonize();
+
+    // lookup(argv,"/home");
+    // exit(0);
+
+    if (argc < 2) 
+    {
+        fprintf(stderr, "Usage: %s Location FileName ...\n", argv[0]);
+        exit(EXIT_FAILURE);
+    }
+
     daemonize();
 
-    lookup(argv,"/home");
-    exit(0);
+    int sleep_time = 60;
+    while (1) 
+    {
+        syslog(LOG_INFO, "Starting file search...");
+        lookup(argv, "/home");
+        syslog(LOG_INFO, "Search complete. Sleeping for %d seconds...", sleep_time);
+        sleep_with_signals(sleep_time);
+    }
+    return 0;
 }
+
+// int main(int argc, char **argv) {
+//     int opt;
+//     int sleep_time = 60;
+
+//     while ((opt = getopt(argc, argv, "t:")) != -1) {
+//         switch (opt) {
+//             case 't':
+//                 sleep_time = atoi(optarg);
+//                 if (sleep_time <= 0) {
+//                     fprintf(stderr, "Invalid sleep time. Using default 60s.\n");
+//                     sleep_time = 60;
+//                 }
+//                 break;
+//             default:
+//                 fprintf(stderr, "Usage: %s [-t sleep_time] FileName ...\n", argv[0]);
+//                 exit(EXIT_FAILURE);
+//         }
+//     }
+
+//     if (optind >= argc) {
+//         fprintf(stderr, "Usage: %s [-t sleep_time] FileName ...\n", argv[0]);
+//         exit(EXIT_FAILURE);
+//     }
+
+//     daemonize();
+
+//     while (1) {
+//         syslog(LOG_INFO, "Starting file search...");
+//         lookup(argv + optind, "/home");
+//         syslog(LOG_INFO, "Search complete. Sleeping for %d seconds...", sleep_time);
+//         sleep_with_signals(sleep_time);
+//     }
+//     return 0;
+// }
 
 void lookup(char **args,char* path){
     DIR *directory;
@@ -56,10 +115,30 @@ void checkForFile(char *dName,char **args){
     while(temp != NULL){
         if(strcmp(temp,dName) == 0){
             printf("File found %s \n",dName);
-            syslog(LOG_INFO, "File found %s", dname);
+            syslog(LOG_INFO, "File found %s", dName);
         }
         i++;
         temp = args[i];
+    }
+}
+
+void handle_signal(int sig) {
+    if (sig == SIGUSR1) {
+        syslog(LOG_INFO, "Received SIGUSR1: Waking up");
+        wakeup_signal = 1;
+    } else if (sig == SIGUSR2) {
+        syslog(LOG_INFO, "Received SIGUSR2: Stopping daemon");
+        exit(EXIT_SUCCESS);
+    }
+}
+
+void sleep_with_signals(int sleep_time) {
+    for (int i = 0; i < sleep_time; i++) {
+        if (wakeup_signal) {
+            wakeup_signal = 0;
+            return;
+        }
+        sleep(1);
     }
 }
 
@@ -70,59 +149,38 @@ void daemonize() {
     fflush(stdout);
 
     pid = fork();
-
-    if (pid < 0) 
-    {
+    if (pid < 0) {
         perror("fork failed");
         exit(EXIT_FAILURE);
     }
-
-    if (pid > 0) 
-    {
+    if (pid > 0) {
         exit(EXIT_SUCCESS);
     }
 
-    if (setsid() < 0) 
-    {
+    if (setsid() < 0) {
         perror("setsid failed");
         exit(EXIT_FAILURE);
     }
 
-    // Ignorujemy sygnał SIGHUP
-    // signal(SIGHUP, SIG_IGN);
-
     pid = fork();
-    if (pid < 0) 
-    {
+    if (pid < 0) {
         perror("Second fork failed");
         exit(EXIT_FAILURE);
     }
-
-    if (pid > 0) 
-    {
+    if (pid > 0) {
         exit(EXIT_SUCCESS);
     }
 
-    // Zmieniamy katalog roboczy na root, aby nie blokować unmountowania
-    if (chdir("/") < 0) 
-    {
-        perror("chdir failed");
-        exit(EXIT_FAILURE);
-    }
-    
-    // Zamykamy standardowe deskryptory plików
+    chdir("/");
+    umask(0);
+
     close(STDIN_FILENO);
     close(STDOUT_FILENO);
     close(STDERR_FILENO);
-    
-    // Przekierowujemy STDIN, STDOUT, STDERR na /dev/null
-    open("/dev/null", O_RDONLY);
-    open("/dev/null", O_WRONLY);
-    open("/dev/null", O_RDWR);
-    
-    // Ustawienie umask na 0 dla pełnej kontroli nad plikami
-    umask(0);
 
     openlog("file_search_daemon", LOG_PID, LOG_DAEMON);
     syslog(LOG_INFO, "Daemon started successfully");
+
+    signal(SIGUSR1, handle_signal);
+    signal(SIGUSR2, handle_signal);
 }
