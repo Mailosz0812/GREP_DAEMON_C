@@ -10,6 +10,8 @@
 #include <syslog.h>
 #include <signal.h>
 #include <getopt.h> 
+#include <time.h>
+#include <limits.h>
 
 #define EXIT_NO_ARGS 1
 volatile sig_atomic_t wakeup_signal = 0;
@@ -111,13 +113,22 @@ void lookup(char **args,char* path){
     }
     closedir(directory);
 }
+
 void checkForFile(char *dName,char **args){
+    time_t now;
+    struct tm *t;
+    char timestamp[20]; //YYYY-MM-DD HH:MM:SS
+
+    time(&now);
+    t = localtime(&now);
+    strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", t);
+    
     int i = 0;
     char* temp = args[i];
     while(temp != NULL){
         if(strcmp(temp,dName) == 0){
             printf("File found %s \n",dName);
-            syslog(LOG_INFO, "File found %s", dName);
+            syslog(LOG_INFO, "[%s] File found: %s", timestamp, dName);
         }
         i++;
         temp = args[i];
