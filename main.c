@@ -15,6 +15,7 @@
 
 #define EXIT_NO_ARGS 1
 volatile sig_atomic_t wakeup_signal = 0;
+bool verbose_mode = false; //-v flag boolean
 
 void lookup(char **args,char* path);
 void checkForFile(char *dName,char **args);
@@ -48,11 +49,51 @@ void daemonize();
 //     return 0;
 // }
 
+//Working main with -t flag
+// int main(int argc, char **argv) {
+//     int opt;
+//     int sleep_time = 60;
+
+//     while ((opt = getopt(argc, argv, "t:")) != -1) {
+//         switch (opt) {
+//             case 't':
+//                 sleep_time = atoi(optarg);
+//                 if (sleep_time <= 0) {
+//                     fprintf(stderr, "Invalid sleep time. Using default 60s.\n");
+//                     sleep_time = 60;
+//                 }
+//                 break;
+//             default:
+//                 fprintf(stderr, "Usage: %s [-t sleep_time] FileName ...\n", argv[0]);
+//                 exit(EXIT_FAILURE);
+//         }
+//     }
+
+//     if (optind >= argc) {
+//         fprintf(stderr, "Usage: %s [-t sleep_time] FileName ...\n", argv[0]);
+//         exit(EXIT_FAILURE);
+//     }
+
+//     char **file_names = &argv[optind];
+
+//     daemonize();
+
+//     while (1) {
+//         syslog(LOG_INFO, "Starting file search...");
+//         lookup(file_names, "/home");  // Poprawione przekazanie argumentów
+//         syslog(LOG_INFO, "Search complete. Sleeping for %d seconds...", sleep_time);
+//         sleep_with_signals(sleep_time);
+//     }
+//     return 0;
+// }
+
+
+//Test main with additional -v flag
 int main(int argc, char **argv) {
     int opt;
     int sleep_time = 60;
 
-    while ((opt = getopt(argc, argv, "t:")) != -1) {
+    while ((opt = getopt(argc, argv, "t:v")) != -1) {
         switch (opt) {
             case 't':
                 sleep_time = atoi(optarg);
@@ -61,29 +102,49 @@ int main(int argc, char **argv) {
                     sleep_time = 60;
                 }
                 break;
+            case 'v':
+                verbose_mode = true;
+                break;
             default:
-                fprintf(stderr, "Usage: %s [-t sleep_time] FileName ...\n", argv[0]);
+                fprintf(stderr, "Usage: %s [-t sleep_time] [-v] FileName ...\n", argv[0]);
                 exit(EXIT_FAILURE);
         }
     }
 
     if (optind >= argc) {
-        fprintf(stderr, "Usage: %s [-t sleep_time] FileName ...\n", argv[0]);
+        fprintf(stderr, "Usage: %s [-t sleep_time] [-v] FileName ...\n", argv[0]);
         exit(EXIT_FAILURE);
     }
 
     char **file_names = &argv[optind];
 
+    //DEBUG
+    if (file_names == NULL) {
+        printf("No file names provided.\n");
+    }
+
+    printf("Searching for files: ");
+    for (int i = 0; file_names[i] != NULL; i++) {
+        printf("%s ", file_names[i]);
+    }
+    printf("\n");
+    //END DEBUG
+
     daemonize();
 
+    syslog(LOG_INFO, "Starting daemon for file search...");
+
     while (1) {
-        syslog(LOG_INFO, "Starting file search...");
-        lookup(file_names, "/home");  // Poprawione przekazanie argumentów
+        if (verbose_mode) syslog(LOG_INFO, "[-v flag]: Waking up, scanning directory: /home");
+        lookup(file_names, "/home");
+        
         syslog(LOG_INFO, "Search complete. Sleeping for %d seconds...", sleep_time);
+        if (verbose_mode) syslog(LOG_INFO, "[-v flag]: Daemon going to sleep...");
         sleep_with_signals(sleep_time);
     }
     return 0;
 }
+
 
 void lookup(char **args,char* path){
     DIR *directory;
@@ -104,6 +165,8 @@ void lookup(char **args,char* path){
         struct stat statbuf;
         if(lstat(fullPath,&statbuf) == -1)continue;
         checkForFile(dp->d_name,args);
+
+        if (verbose_mode) syslog(LOG_INFO, "[-v flag]: Checking file: %s", dp->d_name); //added for logs
 
         if(S_ISDIR(statbuf.st_mode) || S_ISLNK(statbuf.st_mode)){
             if(access(fullPath,R_OK | X_OK) == 0){
@@ -138,9 +201,11 @@ void checkForFile(char *dName,char **args){
 void handle_signal(int sig) {
     if (sig == SIGUSR1) {
         syslog(LOG_INFO, "Received SIGUSR1: Waking up");
+        if (verbose_mode) syslog(LOG_INFO, "[-v flag]: Daemon received SIGUSR1, waking up...");
         wakeup_signal = 1;
     } else if (sig == SIGUSR2) {
         syslog(LOG_INFO, "Received SIGUSR2: Stopping daemon");
+        if (verbose_mode) syslog(LOG_INFO, "[-v flag]: Daemon received SIGUSR2, shutting down...");
         exit(EXIT_SUCCESS);
     }
 }
