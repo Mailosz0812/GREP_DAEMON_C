@@ -12,13 +12,14 @@
 #include <getopt.h> 
 #include <time.h>
 #include <limits.h>
+#include <linux/limits.h>
 
 #define EXIT_NO_ARGS 1
 volatile sig_atomic_t wakeup_signal = 0;
 bool verbose_mode = false; //-v flag boolean
 
-void lookup(char **args,char* path);
-void checkForFile(char *dName,char **args);
+int lookup(char **args,char* path);
+void checkForFile(char *dName,char **args,char *full_path);
 void handle_signal(int sig);
 void sleep_with_signals(int sleep_time);
 void daemonize();
@@ -70,9 +71,9 @@ int main(int argc, char **argv) {
 
     while (1) {
         if (verbose_mode) syslog(LOG_INFO, "[-v flag]: Waking up, scanning directory: /home");
-        lookup(file_names, "/home");
+        int file_counter = lookup(file_names, "/home");
         
-        syslog(LOG_INFO, "Search complete. Sleeping for %d seconds...", sleep_time);
+        syslog(LOG_INFO, "Search complete.Scanned files %d. Sleeping for %d seconds...", file_counter,sleep_time);
         if (verbose_mode) syslog(LOG_INFO, "[-v flag]: Daemon going to sleep...");
         sleep_with_signals(sleep_time);
     }
@@ -80,16 +81,18 @@ int main(int argc, char **argv) {
 }
 
 
-void lookup(char **args,char* path){
+int lookup(char **args,char* path){
     DIR *directory;
     struct dirent *dp;
+    int file_counter = 0;
 
     if((directory = opendir(path)) == NULL){
         printf("Cannot open: %s\n ",path);
-        return;
+        return file_counter;
     }
 
     while((dp = readdir(directory)) != NULL){
+        file_counter++;
         if(strcmp(dp->d_name,".") == 0 || strcmp(dp->d_name,"..") == 0){
             continue;
         }
@@ -98,20 +101,21 @@ void lookup(char **args,char* path){
 
         struct stat statbuf;
         if(lstat(fullPath,&statbuf) == -1)continue;
-        checkForFile(dp->d_name,args);
+        checkForFile(dp->d_name,args,fullPath);
 
         if (verbose_mode) syslog(LOG_INFO, "[-v flag]: Checking file: %s", dp->d_name); //added for logs
 
         if(S_ISDIR(statbuf.st_mode) || S_ISLNK(statbuf.st_mode)){
             if(access(fullPath,R_OK | X_OK) == 0){
-                lookup(args,fullPath);
+                file_counter+=lookup(args,fullPath);
             }
         }
     }
     closedir(directory);
+    return file_counter;
 }
 
-void checkForFile(char *dName,char **args){
+void checkForFile(char *dName,char **args,char *full_path){
     time_t now;
     struct tm *t;
     char timestamp[20]; //YYYY-MM-DD HH:MM:SS
@@ -124,8 +128,8 @@ void checkForFile(char *dName,char **args){
     char* temp = args[i];
     while(temp != NULL){
         if(strcmp(temp,dName) == 0){
-            printf("File found %s \n",dName);
-            syslog(LOG_INFO, "[%s] File found: %s", timestamp, dName);
+            printf("File found %s \n",full_path);
+            syslog(LOG_INFO, "[%s] File found: %s", timestamp, full_path);
         }
         i++;
         temp = args[i];
