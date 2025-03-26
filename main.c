@@ -10,7 +10,7 @@
 
 #define EXIT_NO_ARGS 1
 void lookup(char **args,char* path);
-void checkForFile(char *dName,char **args);
+void checkForFile(char *dName,char **args,char *path);
 
 int main(int argc, char ** argv){
     lookup(argv,"/home");
@@ -35,7 +35,7 @@ void lookup(char **args,char* path){
 
         struct stat statbuf;
         if(lstat(fullPath,&statbuf) == -1)continue;
-        checkForFile(dp->d_name,args);
+        checkForFile(dp->d_name,args,fullPath);
 
         if(S_ISDIR(statbuf.st_mode) || S_ISLNK(statbuf.st_mode)){
             if(access(fullPath,R_OK | X_OK) == 0){
@@ -45,12 +45,12 @@ void lookup(char **args,char* path){
     }
     closedir(directory);
 }
-void checkForFile(char *dName,char **args){
+void checkForFile(char *dName,char **args,char *fullPath){
     int i = 1;
     char* temp = args[i];
     while(temp != NULL){
         if(strcmp(temp,dName) == 0){
-            printf("File found %s \n",dName);
+            printf("File found %s \n",fullPath);
         }
         i++;
         temp = args[i];
