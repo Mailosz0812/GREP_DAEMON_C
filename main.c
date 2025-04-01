@@ -70,21 +70,36 @@ int main(int argc, char **argv) {
 
     daemonize();
 
-    syslog(LOG_INFO, "Starting daemon for file search...");
+    syslog(LOG_INFO, "Daemon is starting for file search. Hello!");
 
     while (1) 
     {
+        if(triggeredSigusr1)
+        {
+            syslog(LOG_INFO, "Recived SIGUSR1 while searching. Reseting daemon.");
+            triggeredSigusr1 = false;
+        }
+
         if(triggeredSigusr2)
         {
+            syslog(LOG_INFO, "SIGUSR2 - going to sleep for %d seconds. Search interrupted.", sleep_time);
             triggeredSigusr2 = false;
             sleep_with_signals(sleep_time);
         }
 
-        if (verbose_mode) syslog(LOG_INFO, "[-v flag]: Waking up, scanning directory: /home");
+        if (verbose_mode)
+        {
+            syslog(LOG_INFO, "File search begins: /home");
+        }
+        syslog(LOG_INFO, "File search begins: /home");
         lookup(file_names, "/home");
         
         syslog(LOG_INFO, "Search complete. Sleeping for %d seconds...", sleep_time);
-        if (verbose_mode) syslog(LOG_INFO, "[-v flag]: Daemon going to sleep...");
+
+        if (verbose_mode)
+        {
+            syslog(LOG_INFO, "[-v flag]: Daemon going to sleep...");
+        }
         sleep_with_signals(sleep_time);
     }
     return 0;
@@ -111,14 +126,11 @@ void lookup(char **args,char* path)
 
         if(triggeredSigusr1)
         {
-            syslog(LOG_INFO, "OTRZYMALEM S1 podczas przeszukiwania, resetuje");
             closedir(directory);
-            triggeredSigusr1 = false;
             return;
         }
         else if(triggeredSigusr2)
         {
-            syslog(LOG_INFO, "OTRZYMALEM S2 podczas przeszukiwania, koncze");
             closedir(directory); 
             return;
         }
@@ -130,7 +142,10 @@ void lookup(char **args,char* path)
         if(lstat(fullPath,&statbuf) == -1)continue;
         checkForFile(dp->d_name,args);
 
-        if (verbose_mode) syslog(LOG_INFO, "[-v flag]: Checking file: %s", dp->d_name); //added for logs
+        if (verbose_mode) 
+        {
+            syslog(LOG_INFO, "Checking file: %s", dp->d_name);
+        }
 
         if(S_ISDIR(statbuf.st_mode) || S_ISLNK(statbuf.st_mode))
         {
@@ -173,22 +188,37 @@ void handle_signal(int sig)
         if(is_searching)
         {
             triggeredSigusr1 = true;
-            syslog(LOG_INFO, "Received SIGUSR1 while scanning: Waking up [reset]");
-            if (verbose_mode) syslog(LOG_INFO, "[-v flag]: Daemon received SIGUSR1, waking up...");
         }
         else if(wakeup_signal == 0)
         {
-            syslog(LOG_INFO, "Received SIGUSR1, while sleeping: Waking up [wakeupsignal]");
-            if (verbose_mode) syslog(LOG_INFO, "[-v flag]: Daemon received SIGUSR1 while sleeping, waking up...");
+            if (verbose_mode)
+            {
+                syslog(LOG_INFO, "Received SIGUSR1, while sleeping. Waking up instantly");
+            }
+            else
+            {
+                syslog(LOG_INFO, "Received SIGUSR1, while sleeping. Waking up instantly");
+            }
             wakeup_signal = 1;
         }
     }
-    else if (sig == SIGUSR2 && is_searching) 
+    else if (sig == SIGUSR2) 
     {
-        triggeredSigusr2 = true;
-        syslog(LOG_INFO, "Received SIGUSR2: Stopping daemon");
-        if (verbose_mode) syslog(LOG_INFO, "[-v flag]: Daemon received SIGUSR2, shutting down...");
-        exit(EXIT_SUCCESS);
+        if(is_searching)
+        {
+            triggeredSigusr2 = true;
+        }
+        else
+        {
+            if(verbose_mode)
+            {
+                syslog(LOG_INFO, "Received SIGUSR2, while sleeping. Signal ignored");
+            }
+            else
+            {
+                syslog(LOG_INFO, "Received SIGUSR2, while sleeping. Signal ignored");
+            }
+        }
     }
 }
 
