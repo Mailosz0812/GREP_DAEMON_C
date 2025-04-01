@@ -16,6 +16,9 @@
 #define EXIT_NO_ARGS 1
 volatile sig_atomic_t wakeup_signal = 0;
 bool verbose_mode = false; //-v flag boolean
+bool is_searching = false;
+bool triggeredSigusr1 = false;
+bool triggeredSigusr2 = false;
 
 void lookup(char **args,char* path);
 void checkForFile(char *dName,char **args);
@@ -45,7 +48,8 @@ int main(int argc, char **argv) {
         }
     }
 
-    if (optind >= argc) {
+    if (optind >= argc) 
+    {
         fprintf(stderr, "Usage: %s [-t sleep_time] [-v] FileName ...\n", argv[0]);
         exit(EXIT_FAILURE);
     }
@@ -68,7 +72,14 @@ int main(int argc, char **argv) {
 
     syslog(LOG_INFO, "Starting daemon for file search...");
 
-    while (1) {
+    while (1) 
+    {
+        if(triggeredSigusr2)
+        {
+            triggeredSigusr2 = false;
+            sleep_with_signals(sleep_time);
+        }
+
         if (verbose_mode) syslog(LOG_INFO, "[-v flag]: Waking up, scanning directory: /home");
         lookup(file_names, "/home");
         
@@ -80,7 +91,8 @@ int main(int argc, char **argv) {
 }
 
 
-void lookup(char **args,char* path){
+void lookup(char **args,char* path)
+{
     DIR *directory;
     struct dirent *dp;
 
@@ -89,10 +101,28 @@ void lookup(char **args,char* path){
         return;
     }
 
-    while((dp = readdir(directory)) != NULL){
-        if(strcmp(dp->d_name,".") == 0 || strcmp(dp->d_name,"..") == 0){
+    is_searching = true;
+    while((dp = readdir(directory)) != NULL)
+    {
+        if(strcmp(dp->d_name,".") == 0 || strcmp(dp->d_name,"..") == 0)
+        {
             continue;
         }
+
+        if(triggeredSigusr1)
+        {
+            syslog(LOG_INFO, "OTRZYMALEM S1 podczas przeszukiwania, resetuje");
+            closedir(directory);
+            triggeredSigusr1 = false;
+            return;
+        }
+        else if(triggeredSigusr2)
+        {
+            syslog(LOG_INFO, "OTRZYMALEM S2 podczas przeszukiwania, koncze");
+            closedir(directory); 
+            return;
+        }
+
         char fullPath[PATH_MAX];
         snprintf(fullPath,sizeof(fullPath),"%s/%s",path,dp->d_name);
 
@@ -102,16 +132,20 @@ void lookup(char **args,char* path){
 
         if (verbose_mode) syslog(LOG_INFO, "[-v flag]: Checking file: %s", dp->d_name); //added for logs
 
-        if(S_ISDIR(statbuf.st_mode) || S_ISLNK(statbuf.st_mode)){
-            if(access(fullPath,R_OK | X_OK) == 0){
+        if(S_ISDIR(statbuf.st_mode) || S_ISLNK(statbuf.st_mode))
+        {
+            if(access(fullPath,R_OK | X_OK) == 0)
+            {
                 lookup(args,fullPath);
             }
         }
     }
+    is_searching = false;
     closedir(directory);
 }
 
-void checkForFile(char *dName,char **args){
+void checkForFile(char *dName,char **args)
+{
     time_t now;
     struct tm *t;
     char timestamp[20]; //YYYY-MM-DD HH:MM:SS
@@ -132,21 +166,38 @@ void checkForFile(char *dName,char **args){
     }
 }
 
-void handle_signal(int sig) {
-    if (sig == SIGUSR1) {
-        syslog(LOG_INFO, "Received SIGUSR1: Waking up");
-        if (verbose_mode) syslog(LOG_INFO, "[-v flag]: Daemon received SIGUSR1, waking up...");
-        wakeup_signal = 1;
-    } else if (sig == SIGUSR2) {
+void handle_signal(int sig) 
+{
+    if (sig == SIGUSR1) 
+    {
+        if(is_searching)
+        {
+            triggeredSigusr1 = true;
+            syslog(LOG_INFO, "Received SIGUSR1 while scanning: Waking up [reset]");
+            if (verbose_mode) syslog(LOG_INFO, "[-v flag]: Daemon received SIGUSR1, waking up...");
+        }
+        else if(wakeup_signal == 0)
+        {
+            syslog(LOG_INFO, "Received SIGUSR1, while sleeping: Waking up [wakeupsignal]");
+            if (verbose_mode) syslog(LOG_INFO, "[-v flag]: Daemon received SIGUSR1 while sleeping, waking up...");
+            wakeup_signal = 1;
+        }
+    }
+    else if (sig == SIGUSR2 && is_searching) 
+    {
+        triggeredSigusr2 = true;
         syslog(LOG_INFO, "Received SIGUSR2: Stopping daemon");
         if (verbose_mode) syslog(LOG_INFO, "[-v flag]: Daemon received SIGUSR2, shutting down...");
         exit(EXIT_SUCCESS);
     }
 }
 
-void sleep_with_signals(int sleep_time) {
-    for (int i = 0; i < sleep_time; i++) {
-        if (wakeup_signal) {
+void sleep_with_signals(int sleep_time) 
+{
+    for (int i = 0; i < sleep_time; i++) 
+    {
+        if (wakeup_signal) 
+        {
             wakeup_signal = 0;
             return;
         }
@@ -161,7 +212,8 @@ void daemonize() {
     fflush(stdout);
 
     pid = fork();
-    if (pid < 0) {
+    if (pid < 0) 
+    {
         perror("fork failed");
         exit(EXIT_FAILURE);
     }
@@ -169,7 +221,8 @@ void daemonize() {
         exit(EXIT_SUCCESS);
     }
 
-    if (setsid() < 0) {
+    if (setsid() < 0) 
+    {
         perror("setsid failed");
         exit(EXIT_FAILURE);
     }
