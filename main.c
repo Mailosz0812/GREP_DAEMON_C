@@ -20,7 +20,6 @@ bool verbose_mode = false; //-v flag boolean
 bool is_searching = false;
 bool triggeredSigusr1 = false;
 bool triggeredSigusr2 = false;
-
 int lookup(char **args,char* path);
 void checkForFile(char *dName,char **args,char *full_path);
 void handle_signal(int sig);
@@ -73,14 +72,6 @@ int main(int argc, char **argv) {
 
     syslog(LOG_INFO, "Daemon is starting for file search. Hello!");
 
-<<<<<<< HEAD
-    while (1) {
-        if (verbose_mode) syslog(LOG_INFO, "[-v flag]: Waking up, scanning directory: /home");
-        int file_counter = lookup(file_names, "/home");
-        
-        syslog(LOG_INFO, "Search complete.Scanned files %d. Sleeping for %d seconds...", file_counter,sleep_time);
-        if (verbose_mode) syslog(LOG_INFO, "[-v flag]: Daemon going to sleep...");
-=======
     while (1) 
     {
         if(triggeredSigusr1)
@@ -101,27 +92,21 @@ int main(int argc, char **argv) {
             syslog(LOG_INFO, "File search begins: /home");
         }
         syslog(LOG_INFO, "File search begins: /home");
-        lookup(file_names, "/home");
+        int file_counter = lookup(file_names, "/home");
         
-        syslog(LOG_INFO, "Search complete. Sleeping for %d seconds...", sleep_time);
+        syslog(LOG_INFO, "Search complete.Scanned files %d. Sleeping for %d seconds...", file_counter,sleep_time);
 
         if (verbose_mode)
         {
             syslog(LOG_INFO, "[-v flag]: Daemon going to sleep...");
         }
->>>>>>> 8594446135c80dd7ebe7dec817a4ef1c31d69f57
         sleep_with_signals(sleep_time);
     }
     return 0;
 }
 
 
-<<<<<<< HEAD
 int lookup(char **args,char* path){
-=======
-void lookup(char **args,char* path)
-{
->>>>>>> 8594446135c80dd7ebe7dec817a4ef1c31d69f57
     DIR *directory;
     struct dirent *dp;
     int file_counter = 0;
@@ -131,29 +116,24 @@ void lookup(char **args,char* path)
         return file_counter;
     }
 
-<<<<<<< HEAD
-    while((dp = readdir(directory)) != NULL){
-        file_counter++;
-        if(strcmp(dp->d_name,".") == 0 || strcmp(dp->d_name,"..") == 0){
-=======
     is_searching = true;
     while((dp = readdir(directory)) != NULL)
     {
+        file_counter++;
         if(strcmp(dp->d_name,".") == 0 || strcmp(dp->d_name,"..") == 0)
         {
->>>>>>> 8594446135c80dd7ebe7dec817a4ef1c31d69f57
             continue;
         }
 
         if(triggeredSigusr1)
         {
             closedir(directory);
-            return;
+            return file_counter;
         }
         else if(triggeredSigusr2)
         {
             closedir(directory); 
-            return;
+            return file_counter;
         }
 
         char fullPath[PATH_MAX];
@@ -168,17 +148,9 @@ void lookup(char **args,char* path)
             syslog(LOG_INFO, "Checking file: %s", dp->d_name);
         }
 
-<<<<<<< HEAD
         if(S_ISDIR(statbuf.st_mode) || S_ISLNK(statbuf.st_mode)){
             if(access(fullPath,R_OK | X_OK) == 0){
                 file_counter+=lookup(args,fullPath);
-=======
-        if(S_ISDIR(statbuf.st_mode) || S_ISLNK(statbuf.st_mode))
-        {
-            if(access(fullPath,R_OK | X_OK) == 0)
-            {
-                lookup(args,fullPath);
->>>>>>> 8594446135c80dd7ebe7dec817a4ef1c31d69f57
             }
         }
     }
@@ -187,12 +159,7 @@ void lookup(char **args,char* path)
     return file_counter;
 }
 
-<<<<<<< HEAD
 void checkForFile(char *dName,char **args,char *full_path){
-=======
-void checkForFile(char *dName,char **args)
-{
->>>>>>> 8594446135c80dd7ebe7dec817a4ef1c31d69f57
     time_t now;
     struct tm *t;
     char timestamp[20]; //YYYY-MM-DD HH:MM:SS
