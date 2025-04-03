@@ -74,6 +74,21 @@ int main(int argc, char **argv) {
 
     while (1) 
     {
+        if (verbose_mode)
+        {
+            syslog(LOG_INFO, "File search begins: /home");
+        }
+
+        syslog(LOG_INFO, "File search begins: /home");
+        is_searching = true;
+        int file_counter = lookup(file_names, "/");
+        is_searching = false;
+        
+        // if(searchComplete)
+        // {
+        //     syslog(LOG_INFO, "Search complete. Scanned files %d. Sleeping for %d seconds...", file_counter,sleep_time);
+        // }
+
         if(triggeredSigusr1)
         {
             syslog(LOG_INFO, "Recived SIGUSR1 while searching. Reseting daemon.");
@@ -84,17 +99,8 @@ int main(int argc, char **argv) {
         {
             syslog(LOG_INFO, "SIGUSR2 - going to sleep for %d seconds. Search interrupted.", sleep_time);
             triggeredSigusr2 = false;
-            sleep_with_signals(sleep_time);
+            // sleep_with_signals(sleep_time);
         }
-
-        if (verbose_mode)
-        {
-            syslog(LOG_INFO, "File search begins: /home");
-        }
-        syslog(LOG_INFO, "File search begins: /home");
-        int file_counter = lookup(file_names, "/home");
-        
-        syslog(LOG_INFO, "Search complete.Scanned files %d. Sleeping for %d seconds...", file_counter,sleep_time);
 
         if (verbose_mode)
         {
@@ -116,18 +122,19 @@ int lookup(char **args,char* path){
         return file_counter;
     }
 
-    is_searching = true;
+    // is_searching = true;
     while((dp = readdir(directory)) != NULL)
     {
-        file_counter++;
         if(strcmp(dp->d_name,".") == 0 || strcmp(dp->d_name,"..") == 0)
         {
             continue;
         }
+        file_counter++;
 
         if(triggeredSigusr1)
         {
             closedir(directory);
+            // is_searching = false;
             return file_counter;
         }
         else if(triggeredSigusr2)
@@ -154,7 +161,7 @@ int lookup(char **args,char* path){
             }
         }
     }
-    is_searching = false;
+    // is_searching = false;
     closedir(directory);
     return file_counter;
 }
@@ -173,7 +180,7 @@ void checkForFile(char *dName,char **args,char *full_path){
     while(temp != NULL){
         if(strcmp(temp,dName) == 0){
             printf("File found %s \n",full_path);
-            syslog(LOG_INFO, "[%s] File found: %s", timestamp, full_path);
+            syslog(LOG_INFO, "[%s] File [%s] found: %s", timestamp, dName, full_path);
         }
         i++;
         temp = args[i];
@@ -188,7 +195,7 @@ void handle_signal(int sig)
         {
             triggeredSigusr1 = true;
         }
-        else if(wakeup_signal == 0)
+        else if(wakeup_signal == 0 && is_searching == false)
         {
             if (verbose_mode)
             {
