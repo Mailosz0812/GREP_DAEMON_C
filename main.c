@@ -11,24 +11,33 @@
 #include <signal.h>
 #include <getopt.h> 
 #include <time.h>
-#include <limits.h>
-#include <linux/limits.h>
+#include <sys/wait.h>
 
 #define EXIT_NO_ARGS 1
+
 volatile sig_atomic_t wakeup_signal = 0;
-bool verbose_mode = false; //-v flag boolean
+bool verbose_mode = false;
 bool is_searching = false;
 bool triggeredSigusr1 = false;
 bool triggeredSigusr2 = false;
-int lookup(char **args,char* path);
-void checkForFile(char *dName,char **args,char *full_path);
+int sleep_time = 60;
+
+pid_t *child_pids = NULL;
+int num_children = 0;
+
+int lookup(char **args, char* path);
+void checkForFile(char *dName, char **args, char *full_path);
 void handle_signal(int sig);
+void handle_signal_child(int sig);
 void sleep_with_signals(int sleep_time);
 void daemonize();
+void supervisor_loop(char **file_names);
+void spawn_children(char **file_names);
+pid_t spawn_child(char *file_name, int index);
+void forward_signal_to_children(int sig);
 
 int main(int argc, char **argv) {
     int opt;
-    int sleep_time = 60;
 
     while ((opt = getopt(argc, argv, "t:v")) != -1) {
         switch (opt) {
@@ -48,14 +57,15 @@ int main(int argc, char **argv) {
         }
     }
 
-    if (optind >= argc) 
-    {
+    if (optind >= argc) {
         fprintf(stderr, "Usage: %s [-t sleep_time] [-v] FileName ...\n", argv[0]);
         exit(EXIT_FAILURE);
     }
 
     char **file_names = &argv[optind];
-
+    num_children = argc - optind;
+    child_pids = malloc(num_children * sizeof(pid_t));
+    
     //DEBUG
     if (file_names == NULL) {
         printf("No file names provided.\n");
@@ -67,78 +77,165 @@ int main(int argc, char **argv) {
     }
     printf("\n");
     //END DEBUG
+    
+    if (child_pids == NULL) 
+    {
+        perror("malloc failed");
+        exit(EXIT_FAILURE);
+    }
+
+    if (verbose_mode) {
+        printf("Searching for files: ");
+        for (int i = 0; file_names[i] != NULL; i++) {
+            printf("%s ", file_names[i]);
+        }
+        printf("\n");
+    }
 
     daemonize();
-
     syslog(LOG_INFO, "Daemon is starting for file search. Hello!");
 
-    while (1) 
-    {
-        if (verbose_mode)
-        {
-            syslog(LOG_INFO, "File search begins: /home");
-        }
+    supervisor_loop(file_names);
 
-        syslog(LOG_INFO, "File search begins: /home");
-        is_searching = true;
-        int file_counter = lookup(file_names, "/");
-        is_searching = false;
-        
-        // if(searchComplete)
-        // {
-        //     syslog(LOG_INFO, "Search complete. Scanned files %d. Sleeping for %d seconds...", file_counter,sleep_time);
-        // }
-
-        if(triggeredSigusr1)
-        {
-            syslog(LOG_INFO, "Recived SIGUSR1 while searching. Reseting daemon.");
-            triggeredSigusr1 = false;
-        }
-
-        if(triggeredSigusr2)
-        {
-            syslog(LOG_INFO, "SIGUSR2 - going to sleep for %d seconds. Search interrupted.", sleep_time);
-            triggeredSigusr2 = false;
-            // sleep_with_signals(sleep_time);
-        }
-
-        if (verbose_mode)
-        {
-            syslog(LOG_INFO, "[-v flag]: Daemon going to sleep...");
-        }
-        sleep_with_signals(sleep_time);
-    }
+    free(child_pids);
     return 0;
 }
 
+void supervisor_loop(char **file_names) 
+{
+    spawn_children(file_names);
+    syslog(LOG_INFO, "File search begins: /");
 
-int lookup(char **args,char* path){
+    int status;
+    pid_t pid;
+    while (1) 
+    {
+        pid = wait(&status);
+
+        if (pid == -1) 
+        {
+            syslog(LOG_ERR, "wait() failed or no children: %m");
+            continue;
+        }
+
+        for (int i = 0; i < num_children; i++) 
+        {
+            if (child_pids[i] == pid) 
+            {
+                if (WIFEXITED(status)) 
+                {
+                    syslog(LOG_INFO, "Child %d exited with status %d. Creating new child.", pid, WEXITSTATUS(status));
+                } 
+                else if (WIFSIGNALED(status)) 
+                {
+                    syslog(LOG_INFO, "Child %d terminated by signal %d. Restarting...", pid, WTERMSIG(status));
+                }
+
+                pid_t new_pid = spawn_child(file_names[i], i);
+                if (new_pid > 0) 
+                {
+                    child_pids[i] = new_pid;
+                }
+                break;
+            }
+        }
+    }
+}
+
+void spawn_children(char **file_names) 
+{
+    for (int i = 0; i < num_children; i++) 
+    {
+        child_pids[i] = spawn_child(file_names[i], i);
+    }
+}
+
+pid_t spawn_child(char *file_name, int index)
+{
+    pid_t pid = fork();
+    if (pid < 0) 
+    {
+        syslog(LOG_ERR, "Fork failed for file: %s", file_name);
+        return -1;
+    } 
+    else if (pid == 0) 
+    {
+        // Proces potomny
+        char *single_file[2] = {file_name, NULL};
+        signal(SIGUSR1, handle_signal_child);
+        signal(SIGUSR2, handle_signal_child);
+        syslog(LOG_INFO, "Child process %d started searching for file: %s", getpid(), file_name);
+        while (1) 
+        {
+            syslog(LOG_INFO, "Child is searching. Looking for file: %s", single_file[0]);
+            is_searching = true;
+            lookup(single_file, "/");
+            is_searching = false;
+
+            if (triggeredSigusr1) 
+            {
+                syslog(LOG_INFO, "Child %d restarted. Searching started.", getpid());
+                triggeredSigusr1 = false;
+                continue;
+            }
+
+            if (triggeredSigusr2) 
+            {
+                syslog(LOG_INFO, "Search interrupted, child %d is going to sleep for %d seconds.", getpid(), sleep_time);
+                triggeredSigusr2 = false;
+                sleep_with_signals(sleep_time);
+                continue;
+            }
+
+            syslog(LOG_INFO, "Child %d is going to sleep for %d seconds. Search completed. Child will die after sleep time.", getpid(), sleep_time);
+            sleep_with_signals(sleep_time);
+            syslog(LOG_INFO, "Child is dying")
+            exit(EXIT_SUCCESS);
+        }
+        exit(EXIT_SUCCESS);
+    } 
+    else 
+    {
+        syslog(LOG_INFO, "Supervisor created child process %d for file: %s", pid, file_name);
+        return pid;
+    }
+}
+
+void forward_signal_to_children(int sig) 
+{
+    for (int i = 0; i < num_children; i++) 
+    {
+        if (child_pids[i] > 0) 
+        {
+            kill(child_pids[i], sig);
+            syslog(LOG_INFO, "Forwarded signal %d to child process %d", sig, child_pids[i]);
+        }
+    }
+}
+
+int lookup(char **args, char* path) {
     DIR *directory;
     struct dirent *dp;
     int file_counter = 0;
 
-    if((directory = opendir(path)) == NULL){
-        printf("Cannot open: %s\n ",path);
+    if((directory = opendir(path)) == NULL) {
+        if (verbose_mode) {
+            syslog(LOG_INFO, "Cannot open: %s", path);
+        }
         return file_counter;
     }
 
-    // is_searching = true;
-    while((dp = readdir(directory)) != NULL)
-    {
-        if(strcmp(dp->d_name,".") == 0 || strcmp(dp->d_name,"..") == 0)
-        {
+    while((dp = readdir(directory)) != NULL) {
+        if(strcmp(dp->d_name,".") == 0 || strcmp(dp->d_name,"..") == 0) {
             continue;
         }
         file_counter++;
 
-        if(triggeredSigusr1)
-        {
+        if(triggeredSigusr1) {
             closedir(directory);
-            // is_searching = false;
             return file_counter;
         }
-        else if(triggeredSigusr2)
-        {
+        else if(triggeredSigusr2) {
             closedir(directory); 
             return file_counter;
         }
@@ -147,26 +244,24 @@ int lookup(char **args,char* path){
         snprintf(fullPath,sizeof(fullPath),"%s/%s",path,dp->d_name);
 
         struct stat statbuf;
-        if(lstat(fullPath,&statbuf) == -1)continue;
+        if(lstat(fullPath,&statbuf) == -1) continue;
         checkForFile(dp->d_name,args,fullPath);
 
-        if (verbose_mode) 
-        {
+        if (verbose_mode) {
             syslog(LOG_INFO, "Checking file: %s", dp->d_name);
         }
 
-        if(S_ISDIR(statbuf.st_mode) || S_ISLNK(statbuf.st_mode)){
-            if(access(fullPath,R_OK | X_OK) == 0){
+        if(S_ISDIR(statbuf.st_mode) || S_ISLNK(statbuf.st_mode)) {
+            if(access(fullPath,R_OK | X_OK) == 0) {
                 file_counter+=lookup(args,fullPath);
             }
         }
     }
-    // is_searching = false;
     closedir(directory);
     return file_counter;
 }
 
-void checkForFile(char *dName,char **args,char *full_path){
+void checkForFile(char *dName, char **args, char *full_path) {
     time_t now;
     struct tm *t;
     char timestamp[20]; //YYYY-MM-DD HH:MM:SS
@@ -177,9 +272,8 @@ void checkForFile(char *dName,char **args,char *full_path){
     
     int i = 0;
     char* temp = args[i];
-    while(temp != NULL){
-        if(strcmp(temp,dName) == 0){
-            printf("File found %s \n",full_path);
+    while(temp != NULL) {
+        if(strcmp(temp,dName) == 0) {
             syslog(LOG_INFO, "[%s] File [%s] found: %s", timestamp, dName, full_path);
         }
         i++;
@@ -191,49 +285,48 @@ void handle_signal(int sig)
 {
     if (sig == SIGUSR1) 
     {
-        if(is_searching)
-        {
-            triggeredSigusr1 = true;
-        }
-        else if(wakeup_signal == 0 && is_searching == false)
-        {
-            if (verbose_mode)
-            {
-                syslog(LOG_INFO, "Received SIGUSR1, while sleeping. Waking up instantly");
-            }
-            else
-            {
-                syslog(LOG_INFO, "Received SIGUSR1, while sleeping. Waking up instantly");
-            }
-            wakeup_signal = 1;
-        }
+        forward_signal_to_children(SIGUSR1);
     }
     else if (sig == SIGUSR2) 
     {
+        forward_signal_to_children(SIGUSR2);
+    }
+}
+
+void handle_signal_child(int sig)
+{
+    if(sig == SIGUSR1)
+    {
+        syslog(LOG_INFO, "Received SIGUSR1 - child");
         if(is_searching)
         {
+            triggeredSigusr1 = true;
+            syslog(LOG_INFO, "Received SIGUSR1, while searching. Reseting - child");
+        }
+        else if(is_searching == false && wakeup_signal == 0)
+        {
+            syslog(LOG_INFO, "Received SIGUSR1, while sleeping. Waking up instantly - child");
+            wakeup_signal = 1;
+        }
+    }
+    else if(sig == SIGUSR2)
+    {
+        syslog(LOG_INFO, "Received SIGUSR2 - child");
+        if(is_searching) 
+        {
             triggeredSigusr2 = true;
+            syslog(LOG_INFO, "Received SIGUSR2, while searching. Going to sleep - child");
         }
         else
         {
-            if(verbose_mode)
-            {
-                syslog(LOG_INFO, "Received SIGUSR2, while sleeping. Signal ignored");
-            }
-            else
-            {
-                syslog(LOG_INFO, "Received SIGUSR2, while sleeping. Signal ignored");
-            }
+            syslog(LOG_INFO, "Received SIGUSR2, while sleeping. Signal ignored - child");
         }
     }
 }
 
-void sleep_with_signals(int sleep_time) 
-{
-    for (int i = 0; i < sleep_time; i++) 
-    {
-        if (wakeup_signal) 
-        {
+void sleep_with_signals(int sleep_time) {
+    for (int i = 0; i < sleep_time; i++) {
+        if (wakeup_signal) {
             wakeup_signal = 0;
             return;
         }
@@ -244,12 +337,13 @@ void sleep_with_signals(int sleep_time)
 void daemonize() {
     pid_t pid;
 
-    printf("Starting daemon...\n");
-    fflush(stdout);
+    if (verbose_mode) {
+        printf("Starting daemon...\n");
+        fflush(stdout);
+    }
 
     pid = fork();
-    if (pid < 0) 
-    {
+    if (pid < 0) {
         perror("fork failed");
         exit(EXIT_FAILURE);
     }
@@ -257,8 +351,7 @@ void daemonize() {
         exit(EXIT_SUCCESS);
     }
 
-    if (setsid() < 0) 
-    {
+    if (setsid() < 0) {
         perror("setsid failed");
         exit(EXIT_FAILURE);
     }
