@@ -182,6 +182,7 @@ pid_t spawn_child(char *file_name, int index)
     {
         // Proces potomny
         char *single_file[2] = {file_name, NULL};
+        int file_count = 0;
         signal(SIGUSR1, handle_signal_child);
         signal(SIGUSR2, handle_signal_child);
         syslog(LOG_INFO, "Child process %d started searching for file: %s", getpid(), file_name);
@@ -189,7 +190,7 @@ pid_t spawn_child(char *file_name, int index)
         {
             syslog(LOG_INFO, "Child is searching. Looking for file: %s", single_file[0]);
             is_searching = true;
-            lookup(single_file, "/");
+            file_count = lookup(single_file, "/");
             is_searching = false;
 
             if (triggeredSigusr1) 
@@ -207,9 +208,9 @@ pid_t spawn_child(char *file_name, int index)
                 continue;
             }
 
-            syslog(LOG_INFO, "Child %d is going to sleep for %d seconds. Search completed. Child will die after sleep time.", getpid(), sleep_time);
+            syslog(LOG_INFO, "Child %d is going to sleep for %d seconds. Search completed. Scanned files: %d Child will die after sleep time.", getpid(), sleep_time,file_count);
             sleep_with_signals(sleep_time);
-            syslog(LOG_INFO, "Child is dying")
+            syslog(LOG_INFO, "Child is dying");
             exit(EXIT_SUCCESS);
         }
         exit(EXIT_SUCCESS);
